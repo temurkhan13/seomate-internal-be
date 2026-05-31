@@ -1,0 +1,47 @@
+[project]
+name = "seomate-api"
+version = "0.1.0"
+description = "SEOMATE read-only API serving the Next.js inspection UI"
+authors = [
+    { name = "Humza Chishty", email = "harris@pixelette.tech" }
+]
+readme = "README.md"
+requires-python = ">=3.11"
+
+dependencies = [
+    "fastapi>=0.110,<1",
+    "uvicorn[standard]>=0.29,<1",
+    "pydantic>=2.6,<3",
+    "pydantic-settings>=2.2,<3",
+    "sqlalchemy[asyncio]>=2.0,<3",
+    "psycopg[binary]>=3.1,<4",
+    "pgvector>=0.2,<1",
+    # The auditor (now in the `seomate-ai` sibling repo) provides the SQLAlchemy
+    # storage models and the taxonomy parser this API depends on. In dev, clone
+    # `temurkhan13/seomate-ai` as a sibling directory and run:
+    #   pip install -e ../seomate-ai
+    # so the two share storage models without duplication.
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0,<9",
+    "pytest-asyncio>=0.23,<1",
+    "httpx>=0.27,<1",        # for FastAPI test client
+    "ruff>=0.4,<1",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["seomate_api*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: seomate-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-seomate}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-seomate_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-seomate}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - seomate_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-seomate} -d ${POSTGRES_DB:-seomate}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  seomate_pg_data:
+    name: seomate_pg_data
