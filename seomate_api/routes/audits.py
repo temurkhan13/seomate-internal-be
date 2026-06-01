@@ -6,7 +6,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from seomate.storage import Audit, Capture
@@ -24,27 +24,58 @@ router = APIRouter(prefix="/api/audits", tags=["audits"])
 DBSession = Annotated[AsyncSession, Depends(get_db_session)]
 
 
+async def _deferred_counts(session: AsyncSession, audit_ids: list[UUID]) -> dict[UUID, int]:
+    """Count, per audit, captures flagged deferred (value->>'deferred' == 'true').
+
+    Deferred is a per-capture business-decision flag (e.g. a paid source not
+    activated), a subset of 'unmeasurable'. Computed here so the dashboard can
+    show 'genuine unmeasurable' vs 'deferred' without a schema column.
+    """
+    if not audit_ids:
+        return {}
+    stmt = (
+        select(Capture.audit_id, func.count())
+        .where(
+            Capture.audit_id.in_(audit_ids),
+            Capture.value["deferred"].astext == "true",
+        )
+        .group_by(Capture.audit_id)
+    )
+    rows = await session.execute(stmt)
+    return {aid: n for aid, n in rows.all()}
+
+
 @router.get("", response_model=list[AuditSummaryResponse])
 async def list_audits(
     session: DBSession,
     site_domain: str | None = Query(None, description="Filter by exact site domain"),
     limit: int = Query(50, ge=1, le=500),
-) -> list[Audit]:
+) -> list[AuditSummaryResponse]:
     """List audits, most recent first."""
     stmt = select(Audit).order_by(desc(Audit.started_at)).limit(limit)
     if site_domain:
         stmt = stmt.where(Audit.site_domain == site_domain)
     result = await session.execute(stmt)
-    return list(result.scalars().all())
+    audits = list(result.scalars().all())
+    deferred = await _deferred_counts(session, [a.audit_id for a in audits])
+    return [
+        AuditSummaryResponse.model_validate(a).model_copy(
+            update={"variables_deferred": deferred.get(a.audit_id, 0)}
+        )
+        for a in audits
+    ]
 
 
 @router.get("/{audit_id}", response_model=AuditDetailResponse)
-async def get_audit(audit_id: UUID, session: DBSession) -> Audit:
+async def get_audit(audit_id: UUID, session: DBSession) -> AuditDetailResponse:
     """Audit detail including the frozen config snapshot."""
     audit = await session.get(Audit, audit_id)
     if audit is None:
         raise HTTPException(status_code=404, detail=f"Audit {audit_id} not found")
-    return audit
+    deferred = await _deferred_counts(session, [audit_id])
+    return AuditDetailResponse.model_validate(audit).model_copy(
+        update={"variables_deferred": deferred.get(audit_id, 0)}
+    )
 
 
 @router.get("/{audit_id}/captures", response_model=list[CaptureSummaryResponse])

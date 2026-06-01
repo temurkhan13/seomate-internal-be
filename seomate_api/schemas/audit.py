@@ -27,6 +27,10 @@ class AuditSummaryResponse(BaseModel):
     variables_partial: int
     variables_errored: int
     variables_unmeasurable: int
+    variables_deferred: int = Field(
+        default=0,
+        description="Subset of unmeasurable that were deferred by choice (e.g. a paid source not activated), via capture value.deferred. The remaining unmeasurable are genuine.",
+    )
     anomaly_count: int = Field(
         default=0,
         description="Number of completeness-gate anomalies detected at audit close.",
