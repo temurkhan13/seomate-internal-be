@@ -10,7 +10,8 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from seomate.storage import Audit, Capture
-from seomate_api.deps import get_db_session
+from seomate.taxonomy import Catalog
+from seomate_api.deps import get_catalog, get_db_session
 from seomate_api.schemas import (
     AuditDetailResponse,
     AuditSummaryResponse,
@@ -22,6 +23,7 @@ from seomate_api.schemas import (
 router = APIRouter(prefix="/api/audits", tags=["audits"])
 
 DBSession = Annotated[AsyncSession, Depends(get_db_session)]
+CatalogDep = Annotated[Catalog, Depends(get_catalog)]
 
 
 async def _deferred_counts(session: AsyncSession, audit_ids: list[UUID]) -> dict[UUID, int]:
@@ -82,6 +84,7 @@ async def get_audit(audit_id: UUID, session: DBSession) -> AuditDetailResponse:
 async def list_captures(
     audit_id: UUID,
     session: DBSession,
+    catalog: CatalogDep,
     pillar: str | None = Query(None, description="Filter by pillar (e.g. 'P1')"),
     status: str | None = Query(None, description="Filter by capture status"),
     evidence_weight: str | None = Query(None, description="Filter by evidence weight"),
@@ -106,7 +109,7 @@ async def list_captures(
 
     result = await session.execute(stmt)
     captures = result.scalars().all()
-    return [_to_summary(c) for c in captures]
+    return [_to_summary(c, catalog) for c in captures]
 
 
 @router.get(
@@ -136,15 +139,22 @@ async def get_capture(
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
 
-def _to_summary(c: Capture) -> CaptureSummaryResponse:
-    """Convert a Capture ORM row into a CaptureSummaryResponse with rule counts."""
+def _to_summary(c: Capture, catalog: Catalog | None = None) -> CaptureSummaryResponse:
+    """Convert a Capture ORM row into a CaptureSummaryResponse with rule counts.
+
+    Resolves the variable's human name from the taxonomy so the UI can show
+    "P1-31 — Open Graph tags" instead of a bare code (and so a mislabeled
+    capture is visible at a glance).
+    """
     rules: Iterable[dict] = c.rules or []
     rules_total = len(list(rules)) if c.rules else 0
     rules_passed = sum(1 for r in (c.rules or []) if r.get("passed"))
     rules_failed = rules_total - rules_passed
+    var = catalog.get(c.variable_id) if catalog else None
     return CaptureSummaryResponse(
         capture_id=c.capture_id,
         variable_id=c.variable_id,
+        variable_name=(var.name if var else ""),
         pillar=c.pillar,
         captured_at=c.captured_at,
         subject_type=c.subject_type,

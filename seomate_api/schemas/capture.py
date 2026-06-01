@@ -32,6 +32,7 @@ class CaptureSummaryResponse(BaseModel):
 
     capture_id: UUID
     variable_id: str
+    variable_name: str = ""  # resolved from the taxonomy so the UI can show "P1-31 — Open Graph tags"
     pillar: str
     captured_at: datetime
     subject_type: str
