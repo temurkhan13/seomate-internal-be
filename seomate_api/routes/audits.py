@@ -47,6 +47,30 @@ async def _deferred_counts(session: AsyncSession, audit_ids: list[UUID]) -> dict
     return {aid: n for aid, n in rows.all()}
 
 
+async def _not_applicable_counts(
+    session: AsyncSession, audit_ids: list[UUID]
+) -> dict[UUID, int]:
+    """Count, per audit, captures with status 'not_applicable'.
+
+    NOT_APPLICABLE means measured-but-no-pass/fail-bar (descriptive metrics).
+    The audits table only stores passed/failed/partial/errored/unmeasurable
+    counts, so without this the Outcomes tiles undercount and don't reconcile
+    to variables_attempted. Computed live from captures, no schema column.
+    """
+    if not audit_ids:
+        return {}
+    stmt = (
+        select(Capture.audit_id, func.count())
+        .where(
+            Capture.audit_id.in_(audit_ids),
+            Capture.status == "not_applicable",
+        )
+        .group_by(Capture.audit_id)
+    )
+    rows = await session.execute(stmt)
+    return {aid: n for aid, n in rows.all()}
+
+
 @router.get("", response_model=list[AuditSummaryResponse])
 async def list_audits(
     session: DBSession,
@@ -59,10 +83,15 @@ async def list_audits(
         stmt = stmt.where(Audit.site_domain == site_domain)
     result = await session.execute(stmt)
     audits = list(result.scalars().all())
-    deferred = await _deferred_counts(session, [a.audit_id for a in audits])
+    audit_ids = [a.audit_id for a in audits]
+    deferred = await _deferred_counts(session, audit_ids)
+    not_applicable = await _not_applicable_counts(session, audit_ids)
     return [
         AuditSummaryResponse.model_validate(a).model_copy(
-            update={"variables_deferred": deferred.get(a.audit_id, 0)}
+            update={
+                "variables_deferred": deferred.get(a.audit_id, 0),
+                "variables_not_applicable": not_applicable.get(a.audit_id, 0),
+            }
         )
         for a in audits
     ]
@@ -75,8 +104,12 @@ async def get_audit(audit_id: UUID, session: DBSession) -> AuditDetailResponse:
     if audit is None:
         raise HTTPException(status_code=404, detail=f"Audit {audit_id} not found")
     deferred = await _deferred_counts(session, [audit_id])
+    not_applicable = await _not_applicable_counts(session, [audit_id])
     return AuditDetailResponse.model_validate(audit).model_copy(
-        update={"variables_deferred": deferred.get(audit_id, 0)}
+        update={
+            "variables_deferred": deferred.get(audit_id, 0),
+            "variables_not_applicable": not_applicable.get(audit_id, 0),
+        }
     )
 
 

@@ -31,6 +31,10 @@ class AuditSummaryResponse(BaseModel):
         default=0,
         description="Subset of unmeasurable that were deferred by choice (e.g. a paid source not activated), via capture value.deferred. The remaining unmeasurable are genuine.",
     )
+    variables_not_applicable: int = Field(
+        default=0,
+        description="Captures with status not_applicable (measured, but no universal pass/fail bar). Not stored as an audit column; computed live from captures so the Outcomes tiles reconcile to variables_attempted.",
+    )
     anomaly_count: int = Field(
         default=0,
         description="Number of completeness-gate anomalies detected at audit close.",
