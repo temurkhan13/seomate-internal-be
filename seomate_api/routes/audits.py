@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from seomate.agent import plan_fixes
 from seomate.storage import Audit, Capture
 from seomate.taxonomy import Catalog
 from seomate_api.deps import get_catalog, get_db_session
@@ -111,6 +112,24 @@ async def get_audit(audit_id: UUID, session: DBSession) -> AuditDetailResponse:
             "variables_not_applicable": not_applicable.get(audit_id, 0),
         }
     )
+
+
+@router.get("/{audit_id}/plan")
+async def get_audit_plan(audit_id: UUID) -> dict:
+    """Remediation plan for an audit , the platform's FIX layer.
+
+    Joins every actionable finding (failed / partial) with its remediation spec
+    and returns prioritized work orders grouped by who-can-fix-them
+    (session / human / budget / owner / offsite), with the auto-generatable
+    fixes flagged and each work order's failing rules + verify path surfaced.
+    This exposes the existing ``plan_fixes`` engine through the API so the
+    dashboard can show "here is how to fix what the audit found", not just the
+    diagnosis. ``plan_fixes`` opens its own DB session.
+    """
+    try:
+        return await plan_fixes(audit_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/{audit_id}/captures", response_model=list[CaptureSummaryResponse])
