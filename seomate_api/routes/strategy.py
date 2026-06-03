@@ -13,12 +13,11 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from seomate.agent import build_strategy
-from seomate.competitive import run_competitive
+from seomate.agent import audit_diff, build_strategy
 from seomate.storage import Audit
 from seomate_api.deps import get_db_session
 
@@ -41,16 +40,14 @@ def _norm_domain(d: str) -> str:
 async def site_strategy(
     session: DBSession,
     target: str = Query(..., description="Site domain, e.g. example.com"),
-    competitors: str | None = Query(
-        None,
-        description="Comma-separated competitor domains; auto-discovered if omitted.",
-    ),
-    keyword_limit: int = Query(100, ge=10, le=500),
 ) -> dict:
-    """Domain-driven strategy: latest-audit positioning + sequenced waves, plus a
-    live competitive run (standing + keyword opportunities). The competitive half
-    is paid (DataForSEO Labs). Returns ``has_audit: false`` (with the audit half
-    null) when the domain has no audit yet , the competitive half still renders.
+    """Domain-driven strategy , FREE (DB only): the latest audit's positioning +
+    sequenced waves, plus the Loop diff (what moved since the previous audit).
+
+    The paid competitive half (standing + keyword opportunities) is NOT run here.
+    It lives on /api/competitive and the UI fetches it only on an explicit action,
+    so navigating to the strategy view never silently spends DataForSEO budget.
+    Returns ``has_audit: false`` (audit null) when the domain has no audit yet.
     """
     norm = _norm_domain(target)
 
@@ -64,20 +61,11 @@ async def site_strategy(
     ).scalar_one_or_none()
 
     audit_strategy = await build_strategy(audit_id) if audit_id else None
-
-    comp_list = [c.strip() for c in (competitors or "").split(",") if c.strip()]
-    try:
-        competitive = await run_competitive(
-            target, comp_list or None, keyword_limit=keyword_limit
-        )
-    except Exception as exc:  # noqa: BLE001 - surface upstream failure to the UI
-        raise HTTPException(
-            status_code=502, detail=f"competitive analysis failed: {exc}"
-        ) from exc
+    diff = await audit_diff(norm)
 
     return {
         "target": norm,
         "has_audit": audit_id is not None,
         "audit": audit_strategy,
-        "competitive": competitive,
+        "diff": diff,
     }
