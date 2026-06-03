@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from seomate.agent import plan_fixes
+from seomate.agent import build_strategy, plan_fixes
 from seomate.storage import Audit, Capture
 from seomate.taxonomy import Catalog
 from seomate_api.deps import get_catalog, get_db_session
@@ -128,6 +128,22 @@ async def get_audit_plan(audit_id: UUID) -> dict:
     """
     try:
         return await plan_fixes(audit_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/{audit_id}/strategy")
+async def get_audit_strategy(audit_id: UUID) -> dict:
+    """Strategy view for an audit , the platform's STRATEGIST surface.
+
+    Parallel to ``/plan``: where the site stands (pillar health) plus the fix work
+    sequenced into waves (quick wins -> session content -> needs-people ->
+    authority). Deterministic and free, derived from the stored audit + the
+    remediation plan. Keyword targeting (ranked keywords + opportunities) is paid
+    and lives on the competitive surface; the UI links there.
+    """
+    try:
+        return await build_strategy(audit_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
