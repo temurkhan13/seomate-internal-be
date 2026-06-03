@@ -13,11 +13,13 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from seomate.agent import audit_diff, build_strategy
+from seomate.competitive import run_competitive
+from seomate.saved import save_analysis
 from seomate.storage import Audit
 from seomate_api.deps import get_db_session
 
@@ -69,3 +71,55 @@ async def site_strategy(
         "audit": audit_strategy,
         "diff": diff,
     }
+
+
+@router.get("/run")
+async def strategy_run(
+    session: DBSession,
+    target: str = Query(..., description="Site domain, e.g. example.com"),
+    competitors: str | None = Query(
+        None, description="Comma-separated competitor domains for the competitive half."
+    ),
+    keyword_limit: int = Query(100, ge=10, le=500),
+) -> dict:
+    """Build a full strategy SNAPSHOT and persist it , PAID (runs competitive).
+
+    Bundles the free audit-half (positioning + waves + Loop diff) with a live
+    competitive run (standing + keyword opportunities), saves the whole bundle as
+    a ``kind='strategy'`` row, and returns it (with ``analysis_id``). The saved
+    snapshot can then be revisited for free from the Strategy history, exactly
+    like an audit. This is the only strategy endpoint that spends DataForSEO.
+    """
+    norm = _norm_domain(target)
+
+    audit_id = (
+        await session.execute(
+            select(Audit.audit_id)
+            .where(Audit.site_domain == norm)
+            .order_by(desc(Audit.started_at))
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    audit_strategy = await build_strategy(audit_id) if audit_id else None
+    diff = await audit_diff(norm)
+
+    comp_list = [c.strip() for c in (competitors or "").split(",") if c.strip()]
+    try:
+        competitive = await run_competitive(
+            target, comp_list or None, keyword_limit=keyword_limit
+        )
+    except Exception as exc:  # noqa: BLE001 - surface upstream failure to the UI
+        raise HTTPException(
+            status_code=502, detail=f"competitive analysis failed: {exc}"
+        ) from exc
+
+    payload = {
+        "target": norm,
+        "has_audit": audit_id is not None,
+        "audit": audit_strategy,
+        "diff": diff,
+        "competitive": competitive,
+    }
+    payload["analysis_id"] = await save_analysis("strategy", norm, payload)
+    return payload

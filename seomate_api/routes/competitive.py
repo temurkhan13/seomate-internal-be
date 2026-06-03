@@ -11,6 +11,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 
 from seomate.competitive import run_competitive
+from seomate.saved import save_analysis
 
 router = APIRouter(prefix="/api/competitive", tags=["competitive"])
 
@@ -27,10 +28,15 @@ async def competitive(
     """Run a live competitive analysis. Hits DataForSEO Labs (paid) on each call."""
     comp_list = [c.strip() for c in (competitors or "").split(",") if c.strip()]
     try:
-        return await run_competitive(
+        report = await run_competitive(
             target, comp_list or None, keyword_limit=keyword_limit
         )
     except Exception as exc:  # noqa: BLE001 - surface upstream failure to the UI
         raise HTTPException(
             status_code=502, detail=f"competitive analysis failed: {exc}"
         ) from exc
+    # Persist the run so it shows in history and can be revisited for free.
+    report["analysis_id"] = await save_analysis(
+        "competitive", report.get("target", target), report
+    )
+    return report
