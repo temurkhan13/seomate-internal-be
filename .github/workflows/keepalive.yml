@@ -1,0 +1,23 @@
+name: keep-alive
+
+# Pings the Render free-tier backend so it doesn't spin down. A spun-down free
+# service cold-starts in ~30-50s on the first request, which makes the dashboard
+# hang on first load after idle. This GET keeps it warm.
+#
+# Best-effort: GitHub scheduled crons can be delayed/skipped under load, so this
+# REDUCES but may not fully eliminate cold starts. For guaranteed always-on,
+# upgrade the Render service to a paid plan (~$7/mo, no spin-down). Delete this
+# file to disable the keep-alive.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # every 10 min (Render free spins down after ~15 min idle)
+  workflow_dispatch:          # allow manual run from the Actions tab
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping backend health
+        run: |
+          curl -fsS --max-time 90 https://seomate-be.onrender.com/api/health || true
