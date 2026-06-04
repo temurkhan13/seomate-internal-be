@@ -80,6 +80,10 @@ async def strategy_run(
     competitors: str | None = Query(
         None, description="Comma-separated competitor domains for the competitive half."
     ),
+    focus: str | None = Query(
+        None,
+        description="Comma-separated focus/priority keywords. When competitors are omitted, competitors are derived from who ranks for these.",
+    ),
     keyword_limit: int = Query(100, ge=10, le=500),
 ) -> dict:
     """Build a full strategy SNAPSHOT and persist it , PAID (runs competitive).
@@ -105,9 +109,10 @@ async def strategy_run(
     diff = await audit_diff(norm)
 
     comp_list = [c.strip() for c in (competitors or "").split(",") if c.strip()]
+    focus_list = [k.strip() for k in (focus or "").split(",") if k.strip()]
     try:
         competitive = await run_competitive(
-            target, comp_list or None, keyword_limit=keyword_limit
+            target, comp_list or None, seed_keywords=focus_list or None, keyword_limit=keyword_limit
         )
     except Exception as exc:  # noqa: BLE001 - surface upstream failure to the UI
         raise HTTPException(

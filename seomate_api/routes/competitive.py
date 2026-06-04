@@ -42,15 +42,20 @@ async def competitive(
     target: str = Query(..., description="Site domain to analyse, e.g. example.com"),
     competitors: str | None = Query(
         None,
-        description="Comma-separated competitor domains. If omitted, auto-discovered (low quality for niche sites).",
+        description="Comma-separated competitor domains. If omitted, derived from focus keywords, else auto-discovered.",
+    ),
+    focus: str | None = Query(
+        None,
+        description="Comma-separated focus/priority keywords (e.g. 'ai development company, blockchain development'). When competitors are omitted, the platform finds them by who ranks for these , the right method for a low-footprint site.",
     ),
     keyword_limit: int = Query(100, ge=10, le=500),
 ) -> dict:
     """Run a live competitive analysis. Hits DataForSEO Labs (paid) on each call."""
     comp_list = [c.strip() for c in (competitors or "").split(",") if c.strip()]
+    focus_list = [k.strip() for k in (focus or "").split(",") if k.strip()]
     try:
         report = await run_competitive(
-            target, comp_list or None, keyword_limit=keyword_limit
+            target, comp_list or None, seed_keywords=focus_list or None, keyword_limit=keyword_limit
         )
     except Exception as exc:  # noqa: BLE001 - surface upstream failure to the UI
         raise HTTPException(
