@@ -9,11 +9,32 @@ for a meaningful result , keyword-overlap auto-discovery is a weak fallback.
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 
 from seomate.competitive import run_competitive
-from seomate.saved import save_analysis
+from seomate.saved import attach_analysis, save_analysis
 
 router = APIRouter(prefix="/api/competitive", tags=["competitive"])
+
+
+class CompetitorTake(BaseModel):
+    domain: str
+    take: str
+
+
+class CompetitiveAnalysisIn(BaseModel):
+    """A session-authored strategic read attached to a saved competitive run.
+
+    The platform produces the numbers; a Claude session writes this judgment and
+    PUTs it so it renders in the run's "Strategist read" section. No analysis is
+    ever generated server-side , this endpoint only stores what a session wrote.
+    """
+
+    headline: str
+    competitor_take: list[CompetitorTake] | None = None
+    the_gaps: list[str] | None = None
+    recommendations: list[str] | None = None
+    self_gap: str | None = None
 
 
 @router.get("")
@@ -40,3 +61,18 @@ async def competitive(
         "competitive", report.get("target", target), report
     )
     return report
+
+
+@router.put("/{analysis_id}/analysis")
+async def attach_competitive_analysis(
+    analysis_id: str, body: CompetitiveAnalysisIn
+) -> dict:
+    """Attach a session-authored strategic read to a saved run (no DataForSEO).
+
+    Free: stores the judgment a Claude session wrote for an existing run so the
+    saved page shows the "so what" beside the numbers.
+    """
+    updated = await attach_analysis(analysis_id, body.model_dump(exclude_none=True))
+    if updated is None:
+        raise HTTPException(status_code=404, detail="saved analysis not found")
+    return {"analysis_id": updated, "status": "attached"}
