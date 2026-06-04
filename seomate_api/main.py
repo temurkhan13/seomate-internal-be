@@ -21,6 +21,7 @@ from seomate_api import __version__
 from seomate_api.auth import require_basic_auth
 from seomate_api.routes import audits as audits_routes
 from seomate_api.routes import competitive as competitive_routes
+from seomate_api.routes import projects as projects_routes
 from seomate_api.routes import saved as saved_routes
 from seomate_api.routes import strategy as strategy_routes
 from seomate_api.routes import taxonomy as taxonomy_routes
@@ -61,6 +62,7 @@ def create_app() -> FastAPI:
     # deliberately outside it so healthchecks (Render, uptime monitors) pass.
     auth_deps = [Depends(require_basic_auth)]
     app.include_router(audits_routes.router, dependencies=auth_deps)
+    app.include_router(projects_routes.router, dependencies=auth_deps)
     app.include_router(taxonomy_routes.router, dependencies=auth_deps)
     app.include_router(competitive_routes.router, dependencies=auth_deps)
     app.include_router(strategy_routes.router, dependencies=auth_deps)
