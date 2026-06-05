@@ -155,3 +155,85 @@ async def list_projects(session: DBSession) -> list[dict[str, Any]]:
 
     projects.sort(key=lambda p: p["last_activity"] or "", reverse=True)
     return projects
+
+
+@router.get("/{domain}/trend")
+async def project_trend(domain: str, session: DBSession) -> dict[str, Any]:
+    """Improvement over time for one project.
+
+    The whole point of the audit loop: as fixes land and the site is re-audited,
+    the score should climb. This returns the trajectory , overall + per-pillar
+    audit health across every audit, and the target's search footprint across
+    competitive runs , so "did we improve?" becomes a line, not a guess.
+
+    Both series are de-duped to the last run per calendar day, so a burst of
+    same-day re-runs collapses to one clean point.
+    """
+    audits = list(
+        (await session.execute(
+            select(Audit).where(Audit.site_domain == domain).order_by(Audit.started_at)
+        )).scalars().all()
+    )
+
+    pillar_health: dict[Any, dict[str, dict[str, int]]] = {}
+    if audits:
+        rows = (
+            await session.execute(
+                select(Capture.audit_id, Capture.pillar, Capture.status, func.count())
+                .where(Capture.audit_id.in_([a.audit_id for a in audits]))
+                .group_by(Capture.audit_id, Capture.pillar, Capture.status)
+            )
+        ).all()
+        for aid, pillar, status, n in rows:
+            pillar_health.setdefault(aid, {}).setdefault(pillar, {})[status] = int(n)
+
+    # last audit per calendar day (audits are ordered oldest-first, so last wins).
+    by_day: dict[str, Audit] = {}
+    for a in audits:
+        day = (a.completed_at or a.started_at).isoformat()[:10]
+        by_day[day] = a
+
+    audit_trend = []
+    for day in sorted(by_day):
+        a = by_day[day]
+        ph = pillar_health.get(a.audit_id, {})
+        pillars: dict[str, int | None] = {}
+        for p in sorted(_PILLAR_LABEL):
+            st = ph.get(p, {})
+            graded = st.get("passed", 0) + st.get("failed", 0) + st.get("partial", 0)
+            pillars[p] = round(100 * st.get("passed", 0) / graded) if graded else None
+        graded_total = a.variables_passed + a.variables_failed + a.variables_partial
+        audit_trend.append({
+            "audit_id": str(a.audit_id),
+            "at": day,
+            "overall_pct": round(100 * a.variables_passed / graded_total) if graded_total else None,
+            "pillars": pillars,
+        })
+
+    # competitive footprint over time , the target's own visibility per day.
+    comps = (
+        await session.execute(
+            select(SavedAnalysis.created_at, SavedAnalysis.payload)
+            .where(SavedAnalysis.kind == "competitive", SavedAnalysis.target == domain)
+            .order_by(SavedAnalysis.created_at)
+        )
+    ).all()
+    comp_by_day: dict[str, dict[str, Any]] = {}
+    for created, payload in comps:
+        day = created.isoformat()[:10]
+        vis = (payload or {}).get("visibility") or []
+        tgt = next((v for v in vis if v.get("is_target")), None)
+        if tgt:
+            comp_by_day[day] = {
+                "at": day,
+                "organic_keywords": tgt.get("organic_keywords"),
+                "organic_traffic": tgt.get("organic_traffic"),
+            }
+    competitive_trend = [comp_by_day[d] for d in sorted(comp_by_day)]
+
+    return {
+        "domain": domain,
+        "pillar_labels": _PILLAR_LABEL,
+        "audit_trend": audit_trend,
+        "competitive_trend": competitive_trend,
+    }
