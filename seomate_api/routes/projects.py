@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -155,6 +155,93 @@ async def list_projects(session: DBSession) -> list[dict[str, Any]]:
 
     projects.sort(key=lambda p: p["last_activity"] or "", reverse=True)
     return projects
+
+
+@router.get("/{domain}")
+async def get_project(domain: str, session: DBSession) -> dict[str, Any]:
+    """One project's summary , the cheap version for the workspace header.
+
+    The list endpoint aggregates every project; a workspace page only needs one,
+    and it re-renders that header on every tab switch. This scopes all queries to
+    the single domain so a tab switch does not pay for the whole portfolio.
+    """
+    audits = list(
+        (await session.execute(
+            select(Audit)
+            .where(Audit.site_domain == domain)
+            .order_by(desc(Audit.started_at))
+        )).scalars().all()
+    )
+    latest = audits[0] if audits else None
+    latest_audit = None
+    if latest is not None:
+        rows = (
+            await session.execute(
+                select(Capture.pillar, Capture.status, func.count())
+                .where(Capture.audit_id == latest.audit_id)
+                .group_by(Capture.pillar, Capture.status)
+            )
+        ).all()
+        ph: dict[str, dict[str, int]] = {}
+        for pillar, status, n in rows:
+            ph.setdefault(pillar, {})[status] = int(n)
+        pillars = []
+        for p in sorted(_PILLAR_LABEL):
+            st = ph.get(p, {})
+            graded = st.get("passed", 0) + st.get("failed", 0) + st.get("partial", 0)
+            pillars.append({
+                "pillar": p,
+                "label": _PILLAR_LABEL[p],
+                "health_pct": round(100 * st.get("passed", 0) / graded) if graded else None,
+            })
+        graded_total = latest.variables_passed + latest.variables_failed + latest.variables_partial
+        latest_audit = {
+            "audit_id": str(latest.audit_id),
+            "status": latest.status,
+            "completed_at": _iso(latest.completed_at) or _iso(latest.started_at),
+            "started_at": _iso(latest.started_at),
+            "overall_pct": round(100 * latest.variables_passed / graded_total) if graded_total else None,
+            "variables_attempted": latest.variables_attempted,
+            "pillars": pillars,
+        }
+
+    sa = (
+        await session.execute(
+            select(SavedAnalysis.analysis_id, SavedAnalysis.kind, SavedAnalysis.created_at)
+            .where(SavedAnalysis.target == domain)
+            .order_by(desc(SavedAnalysis.created_at))
+        )
+    ).all()
+    comp = [r for r in sa if r.kind == "competitive"]
+    strat = [r for r in sa if r.kind == "strategy"]
+    latest_competitive = (
+        {"analysis_id": str(comp[0].analysis_id), "created_at": _iso(comp[0].created_at)}
+        if comp else None
+    )
+    latest_strategy = (
+        {"analysis_id": str(strat[0].analysis_id), "created_at": _iso(strat[0].created_at)}
+        if strat else None
+    )
+    if not audits and not sa:
+        raise HTTPException(status_code=404, detail=f"No project for {domain}")
+    dates = [
+        x for x in (
+            latest_audit["completed_at"] if latest_audit else None,
+            _iso(comp[0].created_at) if comp else None,
+            _iso(strat[0].created_at) if strat else None,
+        ) if x
+    ]
+    return {
+        "domain": domain,
+        "name": _FRIENDLY_NAMES.get(domain, domain),
+        "latest_audit": latest_audit,
+        "audit_count": len(audits),
+        "latest_competitive": latest_competitive,
+        "competitive_count": len(comp),
+        "latest_strategy": latest_strategy,
+        "strategy_count": len(strat),
+        "last_activity": max(dates) if dates else None,
+    }
 
 
 @router.get("/{domain}/trend")
